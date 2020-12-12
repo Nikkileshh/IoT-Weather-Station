@@ -24,7 +24,7 @@ float dst,bt,bp,ba;
 char dstmp[20],btmp[20],bprs[20],balt[20];
 bool bmp280_present=true;
 
-char auth[] = "brSKF-2o8kDY0xC_izqZJn670edawayX";//"a59e6deb52104dc486d4eff51af7e8da";   //Authentication Key will be there in the Blynk App
+char auth[] = ""; //Authentication Key will be there in the Blynk App
 
 //________________________Mention the SSID and Password____________________________________________________
 
