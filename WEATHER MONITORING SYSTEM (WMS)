@@ -1,0 +1,536 @@
+/*************************************************** 
+WEATHER MONITORING SYSTEM (WMS) CODE
+By Nikkilesh
+
+Github Link : https://github.com/Nikkileshh/Iot_projects
+Check out https://github.com/Nikkileshh
+
+ ****************************************************/
+
+
+
+#include <LiquidCrystal_I2C.h>
+#include <Wire.h>
+#include <ESP8266WiFi.h>
+#include <TinyGPS++.h>
+#include <SoftwareSerial.h>
+#include <Adafruit_BMP280.h>
+#include <Arduino.h>    
+#include <WiFiUdp.h>              
+#include <TimeLib.h> 
+#include "Time.h"
+#include "NTPClient.h"
+#include "ThingSpeak.h"
+#include "Adafruit_SI1145.h"  
+#include "MQ135.h"
+#include "DHT.h"
+#include "Adafruit_MQTT.h"
+#include "Adafruit_MQTT_Client.h"
+#define SEALEVELPRESSURE_HPA (1013.25)
+#define BMP280_I2C_ADDRESS  0x76
+#define DHTPIN 2     // what digital pin the DHT22 is conected to
+#define DHTTYPE DHT22   // there are multiple kinds of DHT sensors
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+DHT dht(DHTPIN, DHTTYPE);
+Adafruit_BMP280  bmp280;
+Adafruit_SI1145 uv = Adafruit_SI1145();
+int vis,IR,value,set=10;
+float UVindex,hum=0,dew=0,hic=0;
+const int sensorMin = 0;     // sensor minimum
+const int sensorMax = 1024;  // sensor maximum
+String stat = "";
+const char* ssid     = "Home_Wifi";//Replace with Network SSID (Nikhil_Hotspot)
+const char* password = "Time1234";//Replace with Network Password (wms_1999)
+unsigned long ch_no = 1265340;//Replace with Thingspeak Channel number
+const char * write_api = "XN7V7OSKAH6QYDNT";//Replace with Thingspeak write API
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "asia.pool.ntp.org", 19800, 60000);
+char Time[ ] = "TIME:00:00:00";
+char Date[ ] = "DATE:00/00/2000";
+byte last_second, second_, minute_, hour_, day_, month_;
+int year_;
+
+//GPS Module
+static const uint32_t GPSBaud = 9600;
+// The TinyGPS++ object
+TinyGPSPlus gps;
+// The serial connection to the GPS device
+SoftwareSerial ss(12, 14);
+float latitude , longitude;
+int year1 , month1 , date1, hour1 , minute1 , second1;
+String date_str , time_str , lat_str , lng_str;
+int pm;
+WiFiServer server(80);
+
+// Adafruit IO
+#define AIO_SERVER      "io.adafruit.com"
+#define AIO_SERVERPORT  1883
+#define AIO_USERNAME    "Nikhil_99"
+#define AIO_KEY         "aio_YZVx74LLCLJrl9y1dxf4dpl3JZ3P" 
+WiFiClient  client;
+
+// Setup the MQTT client class by passing in the WiFi client and MQTT server and login details.
+Adafruit_MQTT_Client mqtt(&client, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO_KEY);
+Adafruit_MQTT_Publish Temperature = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/temperature");
+Adafruit_MQTT_Publish Humidity = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/humidity");
+Adafruit_MQTT_Publish Pressure = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/pressure");
+Adafruit_MQTT_Publish Air_Quality = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/air-quality");
+Adafruit_MQTT_Publish Dew_point = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/dew-point");
+Adafruit_MQTT_Publish Rain = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/rain-detector");
+Adafruit_MQTT_Publish Altitude = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/altitude");
+Adafruit_MQTT_Publish Heatindex = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/heat-index");
+Adafruit_MQTT_Publish UVI = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/uv-index");
+Adafruit_MQTT_Publish Visible = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/visible-light");
+
+void setup()
+{
+  Serial.begin(9600);
+  ss.begin(GPSBaud);
+  pinMode(A0,INPUT);
+  delay(1000);
+  Wire.begin(4, 5);
+  lcd.init();
+  lcd.begin(20,4);      // The begin call takes the width and height.
+  lcd.backlight();      // Turn on the backlight.
+  lcd.home();
+  dht.begin();
+  if ( bmp280.begin(BMP280_I2C_ADDRESS) == 0 )
+  {
+    Serial.println("BMP280_I2C_ADDRESS Error!");
+    while (1)
+      delay(1000);
+  }
+  /* Default settings from datasheet. */
+  bmp280.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
+                  Adafruit_BMP280::SAMPLING_X2,     /* Temp. oversampling */
+                  Adafruit_BMP280::SAMPLING_X16,    /* Pressure oversampling */
+                  Adafruit_BMP280::FILTER_X16,      /* Filtering. */
+                  Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
+    if (! uv.begin()) {
+    Serial.println("Didn't find Si1145");
+    while (1);
+    }
+    
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("WiFi connected");
+  server.begin();
+  Serial.println("Server started");
+  Serial.println(WiFi.localIP());
+  //gps_mycode();
+  timeClient.begin();
+  ThingSpeak.begin(client);
+  connect();
+  gps_mycode();
+}
+
+// connect to adafruit io via MQTT
+void connect() {
+  
+  gps_mycode();
+  Serial.print(F("Connecting to Adafruit IO... "));
+  int8_t ret;
+  while ((ret = mqtt.connect()) != 0) {
+    switch (ret) {
+      case 1: Serial.println(F("Wrong protocol")); break;
+      case 2: Serial.println(F("ID rejected")); break;
+      case 3: Serial.println(F("Server unavailable")); break;
+      case 4: Serial.println(F("Bad user/pass")); break;
+      case 5: Serial.println(F("Not authed")); break;
+      case 6: Serial.println(F("Failed to subscribe")); break;
+      default: Serial.println(F("Connection failed")); break;
+    }
+gps_mycode();
+    if(ret >= 0)
+      mqtt.disconnect();
+gps_mycode();
+    Serial.println(F("Retrying connection..."));
+    delay(10000);
+  }
+gps_mycode();
+  Serial.println(F("Adafruit IO Connected!"));
+  gps_mycode();
+  
+}
+
+void loop()
+{
+
+gps_mycode();
+//_________________MEASURING SENSOR PARAMETERS___________________
+
+    float temp     = dht.readTemperature();
+    float pressure = bmp280.readPressure();
+    float hpa = pressure / 100;
+    float alti= bmp280.readAltitude(SEALEVELPRESSURE_HPA); 
+    int rain= digitalRead(D3);
+    MQ135 gasSensor = MQ135(A0);
+    float air_quality = gasSensor.getPPM();  
+    hum = dht.readHumidity();
+    dew= temp - ((100 - hum)/5);      //Dew point temperature --> Td = T - ((100 - RH)/5.)
+    // Compute heat index in Celsius (isFahreheit = false)
+    hic = dht.computeHeatIndex(temp, hum, false);
+    gps_mycode();
+    // Check if any reads failed and exit early (to try again).
+    if (isnan(hum) || isnan(temp)) {
+      Serial.println("Failed to read from DHT sensor!");
+      return;
+    }
+    gps_mycode();
+    int vis= uv.readVisible();
+    int IR = uv.readIR();
+    float UVindex = uv.readUV();
+    // the index is multiplied by 100 so to get the
+    // integer index, divide by 100!
+    UVindex /= 100.0;  
+    gps_mycode();
+
+//________________TIME CODE___________________
+gps_mycode();
+
+timeClient.update();
+  unsigned long unix_epoch = timeClient.getEpochTime();    // Get Unix epoch time from the NTP server
+ 
+  second_ = second(unix_epoch);
+  if (last_second != second_) {
+ 
+ gps_mycode();
+    minute_ = minute(unix_epoch);
+    hour_   = hour(unix_epoch);
+    day_    = day(unix_epoch);
+    month_  = month(unix_epoch);
+    year_   = year(unix_epoch);
+ 
+ 
+ gps_mycode();
+    Time[12] = second_ % 10 + 48;
+    Time[11] = second_ / 10 + 48;
+    Time[9]  = minute_ % 10 + 48;
+    Time[8]  = minute_ / 10 + 48;
+    Time[6]  = hour_   % 10 + 48;
+    Time[5]  = hour_   / 10 + 48;
+ 
+ 
+ gps_mycode();
+    Date[5]  = day_   / 10 + 48;
+    Date[6]  = day_   % 10 + 48;
+    Date[8]  = month_  / 10 + 48;
+    Date[9]  = month_  % 10 + 48;
+    Date[13] = (year_   / 10) % 10 + 48;
+    Date[14] = year_   % 10 % 10 + 48;
+    
+    last_second = second_;
+gps_mycode(); 
+  }
+gps_mycode();
+
+//_________________LCD Display Code___________________
+
+lcd.clear();
+lcd.setCursor(1, 0);
+gps_mycode();
+lcd.print("WEATHER MONITORING");
+lcd.setCursor(4, 1);
+gps_mycode();
+lcd.print("SYSTEM (WMS)");
+lcd.setCursor(0, 2);
+gps_mycode();
+lcd.print(Time);
+lcd.setCursor(0, 3);
+gps_mycode();
+lcd.print(Date);
+gps_mycode();
+delay(6000);
+gps_mycode();
+lcd.clear();
+lcd.setCursor(0, 0); 
+gps_mycode();
+lcd.print("Temperature: ");
+lcd.print(temp);
+lcd.print((char)223);
+lcd.print("C");
+lcd.setCursor(0, 1);
+gps_mycode();
+lcd.print("Humidity: ");
+lcd.print(hum);
+lcd.print("%");
+lcd.setCursor(0, 2);
+gps_mycode();
+lcd.print("Pressure: ");
+lcd.print(hpa);
+lcd.print("hPa");
+lcd.setCursor(0, 3);
+gps_mycode();
+lcd.print("Altitude: ");
+lcd.print(alti);
+lcd.print("m");
+gps_mycode();
+delay(8000);
+gps_mycode();
+lcd.clear();
+lcd.setCursor(0, 0); 
+gps_mycode();
+lcd.print("AQI: ");
+lcd.print(air_quality);
+lcd.print("PPM");
+lcd.setCursor(0, 1);
+gps_mycode();
+lcd.print("Dew Point: ");
+lcd.print(dew);
+lcd.print((char)223);
+lcd.print("C");
+lcd.setCursor(0, 2);
+gps_mycode();
+lcd.print("Heat Index: ");
+lcd.print(hic);
+lcd.print((char)223);
+lcd.print("C");                                   
+lcd.setCursor(0, 3);
+gps_mycode();
+if(rain<1)
+lcd.print("Raining!");
+else
+lcd.print("Not Raining!");
+gps_mycode();
+delay(8000);
+gps_mycode();
+lcd.clear();
+lcd.setCursor(0, 0); 
+gps_mycode();
+lcd.print("UV Index: ");
+lcd.print(UVindex);
+lcd.setCursor(0, 1);
+gps_mycode();
+lcd.print("Visible Light:");
+lcd.print(vis);
+lcd.print("Lux");
+lcd.setCursor(0, 2);
+gps_mycode();
+lcd.print("IR Light: ");
+lcd.print(IR);
+lcd.print("Lux");
+lcd.setCursor(0, 3);
+gps_mycode();
+lcd.print("Have A Nice Day!");
+gps_mycode();
+
+//________________ADAFRUIT IOT CLOUD__________________
+
+   // ping adafruit io a few times to make sure we remain connected
+  if(! mqtt.ping(3)) {
+      gps_mycode();
+    // reconnect to adafruit io
+    if(! mqtt.connected())
+      connect();
+      gps_mycode();
+   }
+      if (!Rain.publish(rain)) {                        //Publish to Adafruit
+      Serial.println(F("Rain Failed"));
+      }
+      delay(1000);
+      gps_mycode();
+      if (! Temperature.publish(temp)) {                //Publish to Adafruit
+      Serial.println(F("Temperature Failed"));
+      } 
+      delay(1000);
+      if (!Humidity.publish(hum)) {                     //Publish to Adafruit
+      Serial.println(F("Humidity Failed"));
+      }
+      delay(1000);
+      gps_mycode();
+      if (!Pressure.publish(hpa)) {                     //Publish to Adafruit
+      Serial.println(F("Failed"));
+      }
+      delay(1000);
+      gps_mycode();
+      if (!Air_Quality.publish(air_quality)) {          //Publish to Adafruit
+      Serial.println(F("Air_Quality Failed"));
+      }
+      delay(1000);
+      gps_mycode();
+      if (!Dew_point.publish(dew)) {                    //Publish to Adafruit
+      Serial.println(F("Dew_point Failed"));
+      }
+      delay(1000);
+      if (!Altitude.publish(alti)) {                    //Publish to Adafruit
+      Serial.println(F("Altitude Failed"));
+      }
+      delay(1000);
+      gps_mycode();
+      if (!Heatindex.publish(hic)) {                    //Publish to Adafruit
+      Serial.println(F("Heat Index Failed"));
+      }
+      delay(1000);
+      if (!UVI.publish(UVindex)) {                    //Publish to Adafruit
+      Serial.println(F("UV Index Failed"));
+      }
+      delay(1000);
+      gps_mycode();
+      if (!Visible.publish(vis)) {                    //Publish to Adafruit
+      Serial.println(F("Visible light Failed"));
+      }
+     else {
+      Serial.println(F("Sent!"));
+    }
+gps_mycode();
+//_____________THINGSPEAK IOT CLOUD________________
+ 
+  ThingSpeak.setField(1, temp);
+  gps_mycode();
+  ThingSpeak.setField(2, hum);
+  gps_mycode();
+  ThingSpeak.setField(3, hpa);
+  gps_mycode();
+  ThingSpeak.setField(4, dew);
+  gps_mycode();
+  ThingSpeak.setField(5, alti);
+  gps_mycode();
+  ThingSpeak.setField(6, air_quality );
+  gps_mycode();
+  ThingSpeak.setField(7, hic );
+  gps_mycode();
+  ThingSpeak.setField(8, UVindex );
+  gps_mycode();
+  ThingSpeak.writeFields(ch_no, write_api);
+  gps_mycode();
+
+}
+
+void gps_mycode()
+{
+   while (ss.available() > 0)    //CHANGED WHILE TO IF
+    if (gps.encode(ss.read()))
+    {
+      if (gps.location.isValid())
+      {
+        Serial.println(F("Location Valid"));
+        latitude = gps.location.lat();
+        lat_str = String(latitude , 6);
+        longitude = gps.location.lng();
+        lng_str = String(longitude , 6);
+      }
+
+      if (gps.date.isValid())
+      {
+        Serial.println(F("Date Valid"));
+        date_str = "";
+        date1 = gps.date.day();
+        month1 = gps.date.month();
+        year1 = gps.date.year();
+
+        if (date1 < 10)
+          date_str = '0';
+        date_str += String(date1);
+
+        date_str += " / ";
+
+        if (month1 < 10)
+          date_str += '0';
+        date_str += String(month1);
+
+        date_str += " / ";
+
+        if (year1 < 10)
+          date_str += '0';
+        date_str += String(year1);
+      }
+
+      if (gps.time.isValid())
+      {
+        Serial.println(F("Time Valid"));
+        time_str = "";
+        hour1 = gps.time.hour();
+        minute1 = gps.time.minute();
+        second1 = gps.time.second();
+
+        minute1 = (minute1 + 30);
+        if (minute1 > 59)
+        {
+          minute1 = minute1 - 60;
+          hour1 = hour1 + 1;
+        }
+        hour1 = (hour1 + 5) ;
+        if (hour1 > 23)
+          hour1 = hour1 - 24;
+
+        if (hour1 >= 12)
+          pm = 1;
+        else
+          pm = 0;
+
+        hour1 = hour1 % 12;
+
+        if (hour1 < 10)
+          time_str = '0';
+        time_str += String(hour1);
+
+        time_str += " : ";
+
+        if (minute1 < 10)
+          time_str += '0';
+        time_str += String(minute1);
+
+        time_str += " : ";
+
+        if (second1 < 10)
+          time_str += '0';
+        time_str += String(second1);
+
+        if (pm == 1)
+          time_str += " PM ";
+        else
+          time_str += " AM ";
+
+      }
+
+    }
+  // Check if a client has connected
+  WiFiClient client = server.available();
+  if (!client)
+  {
+    return;
+  }
+
+  // Prepare the response
+  String s = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n <!DOCTYPE html> <html> <head> <title>WMS</title> <style>";
+  s += "a:link {background-color: YELLOW;text-decoration: none;}";
+  s += "table, th, td {border: 1px solid black;} </style> </head> <body> <h1  style=";
+  s += "font-size:300%;";
+  s += " ALIGN=CENTER>WEATHER MONITORING SYSTEM (WMS)</h1>";
+  s += "<p ALIGN=CENTER style=""font-size:150%;""";
+  s += "> <b>Location Details</b></p> <table ALIGN=CENTER style=";
+  s += "width:50%";
+  s += "> <tr> <th>Latitude</th>";
+  s += "<td ALIGN=CENTER >";
+  s += lat_str;
+  s += "</td> </tr> <tr> <th>Longitude</th> <td ALIGN=CENTER >";
+  s += lng_str;
+  s += "</td> </tr> <tr>  <th>Date</th> <td ALIGN=CENTER >";
+  s += date_str;
+  s += "</td></tr> <tr> <th>Time</th> <td ALIGN=CENTER >";
+  s += time_str;
+  s += "</td>  </tr> </table> ";
+ 
+  
+  if (gps.location.isValid())
+  {
+     s += "<p align=center><a style=""color:RED;font-size:125%;"" href=""http://maps.google.com/maps?&z=15&mrt=yp&t=k&q=";
+    s += lat_str;
+    s += "+";
+    s += lng_str;
+    s += """ target=""_top"">Click here!</a> To check the location in Google maps.</p>";
+  }
+
+  s += "</body> </html> \n";
+
+  client.print(s);
+  delay(100);
+
+}
