@@ -1,3 +1,13 @@
+/*************************************************** 
+AMBIENT LIGHT DETECTION USING LDR
+By Nikkilesh
+
+Github Link : https://github.com/Nikkileshh/Iot_projects
+Check out https://github.com/Nikkileshh
+
+ ****************************************************/
+
+
 #include <ESP8266WiFi.h>;
 
 #include <WiFiClient.h>;
