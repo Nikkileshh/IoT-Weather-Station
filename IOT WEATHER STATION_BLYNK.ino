@@ -1,3 +1,11 @@
+/*************************************************** 
+IOT WEATHER STATION USING BLYNK
+By Nikkilesh
+
+Github Link : https://github.com/Nikkileshh/Iot_projects
+Check out https://github.com/Nikkileshh
+
+ ****************************************************/
 
 #include <Adafruit_Sensor.h>           //In order to use DHT sensor we have to include this library first 
 #define BLYNK_PRINT Serial  
